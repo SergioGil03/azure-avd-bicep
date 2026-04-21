@@ -31,7 +31,7 @@ var kvName  = 'kv-${take(replace(namingPrefix, '-', ''), 10)}-${take(suffix, 6)}
 // KEY VAULT
 // ─────────────────────────────────────────────────────────────
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = {
+resource keyVault 'Microsoft.KeyVault/vaults@2025-05-01' = {
   name: kvName
   location: location
   tags: tags
