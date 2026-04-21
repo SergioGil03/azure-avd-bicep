@@ -7,7 +7,6 @@ param location string
 param namingPrefix string
 param vnetAddressPrefix string
 param avdSubnetPrefix string
-param peSubnetPrefix string
 param tags object
 
 // ─────────────────────────────────────────────────────────────
@@ -155,19 +154,6 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-04-01' = {
           privateLinkServiceNetworkPolicies: 'Enabled'
         }
       }
-
-      // Subnet dedicada para Private Endpoints
-      // Separada de las VMs por claridad y para poder aplicar
-      // políticas diferentes en el futuro
-      {
-        name: 'snet-private-endpoints'
-        properties: {
-          addressPrefix:                     peSubnetPrefix  // 10.10.2.0/24
-          // DEBE estar Disabled para que los Private Endpoints funcionen
-          privateEndpointNetworkPolicies:    'Disabled'
-          privateLinkServiceNetworkPolicies: 'Enabled'
-        }
-      }
     ]
   }
 }
@@ -182,8 +168,5 @@ output vnetName    string = vnet.name
 
 // El ID de la subnet lo usa avd-sessionhosts.bicep para las NICs de las VMs
 output avdSubnetId string = vnet.properties.subnets[0].id
-
-// El ID de la subnet lo usa storage.bicep para el Private Endpoint
-output peSubnetId  string = vnet.properties.subnets[1].id
 
 output nsgId       string = nsg.id
