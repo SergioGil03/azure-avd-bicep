@@ -23,7 +23,7 @@ var tokenExpiry = dateTimeAdd(baseTime, 'PT48H')
 // HOST POOL
 // ─────────────────────────────────────────────────────────────
 
-resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2023-09-05' = {
+resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2025-10-10' = {
   name: 'hp-${namingPrefix}'
   location: location
   tags: tags
