@@ -1,0 +1,16 @@
+@"
+# Ficheros de secretos locales
+*.env
+.env.*
+setup-azure.ps1
+setup-azure.sh
+overrides.bicepparam
+
+# Ficheros temporales de compilación Bicep
+*.json
+!bicep\parameters\*.json
+
+# OS
+.DS_Store
+Thumbs.db
+"@ | Out-File ".gitignore" -Encoding utf8
