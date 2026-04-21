@@ -7,7 +7,6 @@ param location string
 param namingPrefix string
 param hostPoolType string
 param loadBalancerType string
-param maxSessionLimit int
 param logAnalyticsWorkspaceId string
 param tags object
 
@@ -18,8 +17,6 @@ param tags object
 // utcNow() SOLO puede usarse como default value de un parámetro
 // Bicep lo evalúa en el momento del despliegue
 param baseTime string = utcNow('u')
-
-// Ahora sí podemos usarlo en una variable
 var tokenExpiry = dateTimeAdd(baseTime, 'PT48H')
 
 // ─────────────────────────────────────────────────────────────
@@ -40,7 +37,6 @@ resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2023-09-05' = {
     preferredAppGroupType: 'Desktop'
 
     // false = entorno de producción
-    // true = entorno de validación donde Microsoft prueba nuevas features
     validationEnvironment: false
 
     // Las VMs se arrancan automáticamente cuando un usuario
