@@ -1,8 +1,3 @@
-# =============================================================
-# deploy-avd.yml
-# Pipeline CI/CD para Azure Virtual Desktop
-# =============================================================
-
 name: Deploy AVD Infrastructure
 
 on:
@@ -50,6 +45,7 @@ env:
   BICEP_MAIN: bicep/main.bicep
 
 jobs:
+
   lint-and-validate:
     name: Lint y Validar Bicep
     runs-on: ubuntu-latest
@@ -112,7 +108,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const output = `## 🔍 AVD What-If — DEV\n\`\`\`\n${{ steps.whatif.outputs.whatif_output }}\n\`\`\``;
+            const output = `AVD What-If DEV\n\`\`\`\n${{ steps.whatif.outputs.whatif_output }}\n\`\`\``;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -132,7 +128,6 @@ jobs:
       resourceGroupName: ${{ steps.deploy.outputs.resourceGroupName }}
       hostPoolName: ${{ steps.deploy.outputs.hostPoolName }}
       workspaceName: ${{ steps.deploy.outputs.workspaceName }}
-      sessionHostCount: ${{ steps.deploy.outputs.sessionHostCount }}
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
@@ -158,65 +153,6 @@ jobs:
           echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
           echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')" >> $GITHUB_OUTPUT
           echo "workspaceName=$(echo $RESULT | jq -r '.properties.outputs.workspaceName.value')" >> $GITHUB_OUTPUT
-          echo "sessionHostCount=1" >> $GITHUB_OUTPUT
-
-      - name: Registrar VMs al Host Pool
-        run: |
-          RESOURCE_GROUP="${{ steps.deploy.outputs.resourceGroupName }}"
-          HOSTPOOL_NAME="${{ steps.deploy.outputs.hostPoolName }}"
-          SESSION_HOST_COUNT="${{ steps.deploy.outputs.sessionHostCount }}"
-
-          TOKEN=$(az desktopvirtualization hostpool update \
-            --name "$HOSTPOOL_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --registration-info expiration-time="$(date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ')" registration-token-operation="Update" \
-            --query "registrationInfo.token" \
-            --output tsv)
-
-          if [ -z "$TOKEN" ]; then
-            echo "ERROR: Token vacío, abortando"
-            exit 1
-          fi
-          echo "Token generado ✓ (longitud: ${#TOKEN})"
-
-          for i in $(seq 1 $SESSION_HOST_COUNT); do
-            VM_NAME="vm-avddev-$(printf '%02d' $i)"
-            echo "Registrando $VM_NAME..."
-
-            az vm extension delete \
-              --resource-group "$RESOURCE_GROUP" \
-              --vm-name "$VM_NAME" \
-              --name "DSC" 2>/dev/null || true
-
-            cat > /tmp/dsc-settings.json << ENDJSON
-          {
-            "modulesUrl": "https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration.zip",
-            "configurationFunction": "Configuration.ps1\\AddSessionHost",
-            "properties": {
-              "HostPoolName": "$HOSTPOOL_NAME"
-            }
-          }
-          ENDJSON
-
-            cat > /tmp/dsc-protected.json << ENDJSON
-          {
-            "Items": {
-              "RegistrationInfoToken": "$TOKEN"
-            }
-          }
-          ENDJSON
-
-            az vm extension set \
-              --resource-group "$RESOURCE_GROUP" \
-              --vm-name "$VM_NAME" \
-              --name "DSC" \
-              --publisher "Microsoft.Powershell" \
-              --version "2.73" \
-              --settings @/tmp/dsc-settings.json \
-              --protected-settings @/tmp/dsc-protected.json
-
-            echo "$VM_NAME registrada ✓"
-          done
 
       - name: Summary del despliegue
         run: |
@@ -226,7 +162,7 @@ jobs:
           echo "| Resource Group | ${{ steps.deploy.outputs.resourceGroupName }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Host Pool | ${{ steps.deploy.outputs.hostPoolName }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Workspace | ${{ steps.deploy.outputs.workspaceName }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Suscripción | ${{ secrets.AZURE_SUBSCRIPTION_ID }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Suscripcion | ${{ secrets.AZURE_SUBSCRIPTION_ID }} |" >> $GITHUB_STEP_SUMMARY
 
   deploy-prod:
     name: Deploy PROD
@@ -269,13 +205,11 @@ jobs:
             --output json)
           echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
           echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')" >> $GITHUB_OUTPUT
-          echo "sessionHostCount=3" >> $GITHUB_OUTPUT
 
-      - name: Registrar VMs al Host Pool
+      - name: Summary del despliegue
         run: |
-          RESOURCE_GROUP="${{ steps.deploy.outputs.resourceGroupName }}"
-          HOSTPOOL_NAME="${{ steps.deploy.outputs.hostPoolName }}"
-          SESSION_HOST_COUNT="${{ steps.deploy.outputs.sessionHostCount }}"
-
-          TOKEN=$(az desktopvirtualization hostpool update \
-            --name "$HOSTPOOL_N
+          echo "## PROD Desplegado correctamente" >> $GITHUB_STEP_SUMMARY
+          echo "| Recurso | Valor |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | ${{ steps.deploy.outputs.resourceGroupName }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Host Pool | ${{ steps.deploy.outputs.hostPoolName }} |" >> $GITHUB_STEP_SUMMARY
