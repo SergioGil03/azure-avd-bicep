@@ -50,6 +50,11 @@ env:
   BICEP_MAIN:     bicep/main.bicep
 
 jobs:
+
+# =============================================================
+# JOB 1 — LINT & VALIDATE
+# =============================================================
+
   lint-and-validate:
     name: Lint y Validar Bicep
     runs-on: ubuntu-latest
@@ -77,6 +82,10 @@ jobs:
           name: arm-template-compilado
           path: /tmp/bicep-compiled/
           retention-days: 30
+
+# =============================================================
+# JOB 2 — WHAT-IF (solo en Pull Requests)
+# =============================================================
 
   what-if:
     name: What-If DEV
@@ -115,13 +124,17 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const output = `## AVD What-If — DEV\n\`\`\`\n${{ steps.whatif.outputs.whatif_output }}\n\`\`\``;
+            const output = `## 🔍 AVD What-If — DEV\n\`\`\`\n${{ steps.whatif.outputs.whatif_output }}\n\`\`\``;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner:        context.repo.owner,
               repo:         context.repo.repo,
               body:         output
             });
+
+# =============================================================
+# JOB 3 — DEPLOY DEV
+# =============================================================
 
   deploy-dev:
     name: Deploy DEV
@@ -164,17 +177,15 @@ jobs:
           echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
           echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')"           >> $GITHUB_OUTPUT
           echo "workspaceName=$(echo $RESULT | jq -r '.properties.outputs.workspaceName.value')"         >> $GITHUB_OUTPUT
-          echo "sessionHostCount=1" >> $GITHUB_OUTPUT   # dev siempre 1 VM
+          echo "sessionHostCount=1" >> $GITHUB_OUTPUT
 
-      # Genera el token fresco y registra cada VM al Host Pool via CLI
-      # Evita el problema de leer el token desde outputs de Bicep
       - name: Registrar VMs al Host Pool
         run: |
           RESOURCE_GROUP="${{ steps.deploy.outputs.resourceGroupName }}"
           HOSTPOOL_NAME="${{ steps.deploy.outputs.hostPoolName }}"
           SESSION_HOST_COUNT="${{ steps.deploy.outputs.sessionHostCount }}"
 
-          # Genera un token fresco con 2 horas de validez
+          # Genera token fresco con 2 horas de validez
           TOKEN=$(az desktopvirtualization hostpool update \
             --name "$HOSTPOOL_NAME" \
             --resource-group "$RESOURCE_GROUP" \
@@ -182,12 +193,45 @@ jobs:
             --query "registrationInfo.token" \
             --output tsv)
 
-          echo "Token generado"
+          # Verifica que el token no está vacío
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: Token vacío, abortando"
+            exit 1
+          fi
+          echo "Token generado ✓ (longitud: ${#TOKEN})"
 
-          # Instala la extensión DSC en cada VM para registrarla al Host Pool
           for i in $(seq 1 $SESSION_HOST_COUNT); do
             VM_NAME="vm-avddev-$(printf '%02d' $i)"
             echo "Registrando $VM_NAME..."
+
+            # Borrar extensión DSC si existe en estado fallido
+            # Necesario para poder reinstalarla limpiamente
+            az vm extension delete \
+              --resource-group "$RESOURCE_GROUP" \
+              --vm-name "$VM_NAME" \
+              --name "DSC" 2>/dev/null || true
+
+            # Construye el JSON de settings usando heredoc
+            # Evita problemas de escaping de backslashes y comillas
+            SETTINGS=$(cat <<ENDJSON
+          {
+            "modulesUrl": "https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration.zip",
+            "configurationFunction": "Configuration.ps1\\AddSessionHost",
+            "properties": {
+              "HostPoolName": "$HOSTPOOL_NAME"
+            }
+          }
+          ENDJSON
+            )
+
+            PROTECTED_SETTINGS=$(cat <<ENDJSON
+          {
+            "Items": {
+              "RegistrationInfoToken": "$TOKEN"
+            }
+          }
+          ENDJSON
+            )
 
             az vm extension set \
               --resource-group "$RESOURCE_GROUP" \
@@ -195,17 +239,10 @@ jobs:
               --name "DSC" \
               --publisher "Microsoft.Powershell" \
               --version "2.73" \
-              --settings "{
-                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration.zip\",
-                \"configurationFunction\": \"Configuration.ps1\\\\AddSessionHost\",
-                \"properties\": {
-                  \"HostPoolName\": \"$HOSTPOOL_NAME\",
-                  \"AadJoin\": true
-                }
-              }" \
-              --protected-settings "{\"properties\": {\"RegistrationInfoToken\": \"$TOKEN\"}}"
+              --settings "$SETTINGS" \
+              --protected-settings "$PROTECTED_SETTINGS"
 
-            echo "$VM_NAME registrada"
+            echo "$VM_NAME registrada ✓"
           done
 
       - name: Summary del despliegue
@@ -217,6 +254,10 @@ jobs:
           echo "| Host Pool      | ${{ steps.deploy.outputs.hostPoolName }} |"                           >> $GITHUB_STEP_SUMMARY
           echo "| Workspace      | ${{ steps.deploy.outputs.workspaceName }} |"                          >> $GITHUB_STEP_SUMMARY
           echo "| Suscripción    | ${{ secrets.AZURE_SUBSCRIPTION_ID }} |"                               >> $GITHUB_STEP_SUMMARY
+
+# =============================================================
+# JOB 4 — DEPLOY PROD
+# =============================================================
 
   deploy-prod:
     name: Deploy PROD
@@ -261,9 +302,8 @@ jobs:
 
           echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
           echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')"           >> $GITHUB_OUTPUT
-          echo "sessionHostCount=3" >> $GITHUB_OUTPUT   # prod siempre 3 VMs
+          echo "sessionHostCount=3" >> $GITHUB_OUTPUT
 
-      # Mismo proceso que DEV pero para 3 VMs y nombre prod
       - name: Registrar VMs al Host Pool
         run: |
           RESOURCE_GROUP="${{ steps.deploy.outputs.resourceGroupName }}"
@@ -277,11 +317,40 @@ jobs:
             --query "registrationInfo.token" \
             --output tsv)
 
-          echo "Token generado"
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: Token vacío, abortando"
+            exit 1
+          fi
+          echo "Token generado ✓ (longitud: ${#TOKEN})"
 
           for i in $(seq 1 $SESSION_HOST_COUNT); do
             VM_NAME="vm-avdprod-$(printf '%02d' $i)"
             echo "Registrando $VM_NAME..."
+
+            az vm extension delete \
+              --resource-group "$RESOURCE_GROUP" \
+              --vm-name "$VM_NAME" \
+              --name "DSC" 2>/dev/null || true
+
+            SETTINGS=$(cat <<ENDJSON
+          {
+            "modulesUrl": "https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration.zip",
+            "configurationFunction": "Configuration.ps1\\AddSessionHost",
+            "properties": {
+              "HostPoolName": "$HOSTPOOL_NAME"
+            }
+          }
+          ENDJSON
+            )
+
+            PROTECTED_SETTINGS=$(cat <<ENDJSON
+          {
+            "Items": {
+              "RegistrationInfoToken": "$TOKEN"
+            }
+          }
+          ENDJSON
+            )
 
             az vm extension set \
               --resource-group "$RESOURCE_GROUP" \
@@ -289,17 +358,10 @@ jobs:
               --name "DSC" \
               --publisher "Microsoft.Powershell" \
               --version "2.73" \
-              --settings "{
-                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration.zip\",
-                \"configurationFunction\": \"Configuration.ps1\\\\AddSessionHost\",
-                \"properties\": {
-                  \"HostPoolName\": \"$HOSTPOOL_NAME\",
-                  \"AadJoin\": true
-                }
-              }" \
-              --protected-settings "{\"properties\": {\"RegistrationInfoToken\": \"$TOKEN\"}}"
+              --settings "$SETTINGS" \
+              --protected-settings "$PROTECTED_SETTINGS"
 
-            echo "$VM_NAME registrada"
+            echo "$VM_NAME registrada ✓"
           done
 
       - name: Summary del despliegue
