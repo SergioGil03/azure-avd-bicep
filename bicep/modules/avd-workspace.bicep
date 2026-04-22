@@ -12,7 +12,7 @@ param tags object
 // WORKSPACE
 // ─────────────────────────────────────────────────────────────
 
-resource workspace 'Microsoft.DesktopVirtualization/workspaces@2023-09-05' = {
+resource workspace 'Microsoft.DesktopVirtualization/workspaces@2025-10-10' = {
   name: 'ws-${namingPrefix}'
   location: location
   tags: tags
