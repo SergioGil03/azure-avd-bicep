@@ -1,0 +1,290 @@
+# =============================================================
+# deploy-avd.yml
+# Pipeline CI/CD para Azure Virtual Desktop
+# =============================================================
+#
+# Triggers:
+#   push a main        → despliega en DEV automáticamente
+#   push a release/**  → despliega en PROD con aprobación
+#   pull_request       → solo lint + what-if, nunca despliega
+#   workflow_dispatch  → lanzamiento manual desde GitHub UI
+# =============================================================
+
+name: Deploy AVD Infrastructure
+
+# ─────────────────────────────────────────────────────────────
+# TRIGGERS — cuándo se ejecuta el workflow
+# ─────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+    paths:
+      # Solo se lanza si cambian ficheros de infraestructura
+      - 'bicep/**'
+      - '.github/workflows/deploy-avd.yml'
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'bicep/**'
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Entorno a desplegar'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+      what_if_only:
+        description: 'Solo what-if, sin desplegar'
+        required: false
+        default: false
+        type: boolean
+
+# ─────────────────────────────────────────────────────────────
+# CONCURRENCIA
+# Evita que dos deploys del mismo entorno corran en paralelo
+# ─────────────────────────────────────────────────────────────
+
+concurrency:
+  group: avd-deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+# ─────────────────────────────────────────────────────────────
+# PERMISOS
+# Necesarios para el intercambio de token OIDC con Azure
+# ─────────────────────────────────────────────────────────────
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+# ─────────────────────────────────────────────────────────────
+# VARIABLES GLOBALES
+# Disponibles en todos los jobs
+# ─────────────────────────────────────────────────────────────
+
+env:
+  AZURE_LOCATION: francecentral
+  BICEP_MAIN:     bicep/main.bicep
+
+# =============================================================
+# JOB 1 — LINT & VALIDATE
+# Compila y valida el Bicep sin tocar Azure
+# Se ejecuta siempre — en push, PR y manual
+# =============================================================
+
+jobs:
+  lint-and-validate:
+    name: Lint y Validar Bicep
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Bicep CLI
+        run: |
+          curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x ./bicep
+          sudo mv ./bicep /usr/local/bin/bicep
+          bicep --version
+
+      # Comprueba errores de sintaxis y buenas prácticas
+      - name: Bicep lint
+        run: bicep lint ${{ env.BICEP_MAIN }}
+
+      # Compila a ARM — verifica que todo es correcto
+      - name: Bicep build
+        run: bicep build ${{ env.BICEP_MAIN }} --outdir /tmp/bicep-compiled
+
+      # Guarda el ARM compilado como artefacto del pipeline
+      - name: Guardar ARM template compilado
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm-template-compilado
+          path: /tmp/bicep-compiled/
+          retention-days: 30
+
+# =============================================================
+# JOB 2 — WHAT-IF (solo en Pull Requests)
+# Muestra qué cambiaría en Azure sin desplegar nada
+# Posta el resultado como comentario en el PR
+# =============================================================
+
+  what-if:
+    name: What-If DEV
+    runs-on: ubuntu-latest
+    needs: lint-and-validate   # solo corre si el lint pasó
+    environment: dev
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      # Login con OIDC — no hay contraseñas, usa el token federado
+      - name: Login en Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ejecutar What-If
+        id: whatif
+        run: |
+          OUTPUT=$(az deployment sub what-if \
+            --location ${{ env.AZURE_LOCATION }} \
+            --template-file ${{ env.BICEP_MAIN }} \
+            --parameters bicep/parameters/dev.bicepparam \
+            --parameters vmAdminUsername="${{ secrets.AVD_VM_ADMIN_USERNAME }}" \
+            --parameters vmAdminPassword="${{ secrets.AVD_VM_ADMIN_PASSWORD }}" \
+            --no-pretty-print 2>&1 || true)
+
+          # Guarda el output para usarlo en el comentario del PR
+          echo "whatif_output<<EOF" >> $GITHUB_OUTPUT
+          echo "$OUTPUT"            >> $GITHUB_OUTPUT
+          echo "EOF"                >> $GITHUB_OUTPUT
+
+      # Posta el resultado como comentario en el PR
+      - name: Comentar resultado en PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `## 🔍 AVD What-If — DEV\n\`\`\`\n${{ steps.whatif.outputs.whatif_output }}\n\`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              body:         output
+            });
+
+# =============================================================
+# JOB 3 — DEPLOY DEV
+# Se ejecuta en push a main
+# Automático, sin aprobación
+# =============================================================
+
+  deploy-dev:
+    name: Deploy DEV
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    environment: dev
+    if: |
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev' && inputs.what_if_only == false)
+
+    outputs:
+      resourceGroupName: ${{ steps.deploy.outputs.resourceGroupName }}
+      hostPoolName:      ${{ steps.deploy.outputs.hostPoolName }}
+      workspaceName:     ${{ steps.deploy.outputs.workspaceName }}
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Login en Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Desplegar AVD en DEV
+        id: deploy
+        run: |
+          RESULT=$(az deployment sub create \
+            --name "avd-dev-$(date +%Y%m%d%H%M%S)" \
+            --location ${{ env.AZURE_LOCATION }} \
+            --template-file ${{ env.BICEP_MAIN }} \
+            --parameters bicep/parameters/dev.bicepparam \
+            --parameters vmAdminUsername="${{ secrets.AVD_VM_ADMIN_USERNAME }}" \
+            --parameters vmAdminPassword="${{ secrets.AVD_VM_ADMIN_PASSWORD }}" \
+            --output json)
+
+          # Extrae los outputs del despliegue y los guarda
+          # para usarlos en el summary y en jobs siguientes
+          echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
+          echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')"           >> $GITHUB_OUTPUT
+          echo "workspaceName=$(echo $RESULT | jq -r '.properties.outputs.workspaceName.value')"         >> $GITHUB_OUTPUT
+
+      # Summary visible en la UI de GitHub Actions
+      # Settings → Actions → deploy-avd → el run concreto
+      - name: Summary del despliegue
+        run: |
+          echo "## DEV Desplegado correctamente" >> $GITHUB_STEP_SUMMARY
+          echo "| Recurso | Valor |"                >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|"                           >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | ${{ steps.deploy.outputs.resourceGroupName }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Host Pool      | ${{ steps.deploy.outputs.hostPoolName }} |"      >> $GITHUB_STEP_SUMMARY
+          echo "| Workspace      | ${{ steps.deploy.outputs.workspaceName }} |"     >> $GITHUB_STEP_SUMMARY
+          echo "| Suscripción    | ${{ secrets.AZURE_SUBSCRIPTION_ID }} |"          >> $GITHUB_STEP_SUMMARY
+
+# =============================================================
+# JOB 4 — DEPLOY PROD
+# Se ejecuta en push a release/**
+# Requiere aprobación manual en GitHub Environments
+# =============================================================
+
+  deploy-prod:
+    name: Deploy PROD
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    environment: prod    # ← aquí se activa la aprobación manual
+    if: |
+      startsWith(github.ref, 'refs/heads/release/') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'prod' && inputs.what_if_only == false)
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Login en Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # What-if automático antes de desplegar en prod
+      # última comprobación antes de tocar producción
+      - name: What-If antes de desplegar en PROD
+        run: |
+          az deployment sub what-if \
+            --location ${{ env.AZURE_LOCATION }} \
+            --template-file ${{ env.BICEP_MAIN }} \
+            --parameters bicep/parameters/prod.bicepparam \
+            --parameters vmAdminUsername="${{ secrets.AVD_VM_ADMIN_USERNAME }}" \
+            --parameters vmAdminPassword="${{ secrets.AVD_VM_ADMIN_PASSWORD }}"
+
+      - name: Desplegar AVD en PROD
+        id: deploy
+        run: |
+          RESULT=$(az deployment sub create \
+            --name "avd-prod-$(date +%Y%m%d%H%M%S)" \
+            --location ${{ env.AZURE_LOCATION }} \
+            --template-file ${{ env.BICEP_MAIN }} \
+            --parameters bicep/parameters/prod.bicepparam \
+            --parameters vmAdminUsername="${{ secrets.AVD_VM_ADMIN_USERNAME }}" \
+            --parameters vmAdminPassword="${{ secrets.AVD_VM_ADMIN_PASSWORD }}" \
+            --output json)
+
+          echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
+          echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')"           >> $GITHUB_OUTPUT
+
+      - name: Summary del despliegue
+        run: |
+          echo "## PROD Desplegado correctamente"                                                     >> $GITHUB_STEP_SUMMARY
+          echo "| Recurso | Valor |"                                                                      >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|"                                                                                 >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | ${{ steps.deploy.outputs.resourceGroupName }} |"                      >> $GITHUB_STEP_SUMMARY
+          echo "| Host Pool      | ${{ steps.deploy.outputs.hostPoolName }} |"                           >> $GITHUB_STEP_SUMMARY
