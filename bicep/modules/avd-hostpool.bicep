@@ -94,19 +94,13 @@ resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2025-10-10' = {
 
 resource diagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name:  'diag-${hostPool.name}'
-  scope: hostPool    // se aplica sobre el Host Pool
+  scope: hostPool
   properties: {
     workspaceId: logAnalyticsWorkspaceId
     logs: [
       {
-        // allLogs captura todas las categorías de log disponibles
-        // para este recurso — conexiones, errores, auditoría, etc.
         categoryGroup: 'allLogs'
         enabled:       true
-        retentionPolicy: {
-          days:    30
-          enabled: true
-        }
       }
     ]
   }
