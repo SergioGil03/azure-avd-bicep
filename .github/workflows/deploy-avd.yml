@@ -2,19 +2,8 @@
 # deploy-avd.yml
 # Pipeline CI/CD para Azure Virtual Desktop
 # =============================================================
-#
-# Triggers:
-#   push a main        → despliega en DEV automáticamente
-#   push a release/**  → despliega en PROD con aprobación
-#   pull_request       → solo lint + what-if, nunca despliega
-#   workflow_dispatch  → lanzamiento manual desde GitHub UI
-# =============================================================
 
 name: Deploy AVD Infrastructure
-
-# ─────────────────────────────────────────────────────────────
-# TRIGGERS — cuándo se ejecuta el workflow
-# ─────────────────────────────────────────────────────────────
 
 on:
   push:
@@ -22,7 +11,6 @@ on:
       - main
       - 'release/**'
     paths:
-      # Solo se lanza si cambian ficheros de infraestructura
       - 'bicep/**'
       - '.github/workflows/deploy-avd.yml'
 
@@ -48,39 +36,18 @@ on:
         default: false
         type: boolean
 
-# ─────────────────────────────────────────────────────────────
-# CONCURRENCIA
-# Evita que dos deploys del mismo entorno corran en paralelo
-# ─────────────────────────────────────────────────────────────
-
 concurrency:
   group: avd-deploy-${{ github.ref_name }}
   cancel-in-progress: false
-
-# ─────────────────────────────────────────────────────────────
-# PERMISOS
-# Necesarios para el intercambio de token OIDC con Azure
-# ─────────────────────────────────────────────────────────────
 
 permissions:
   id-token: write
   contents: read
   pull-requests: write
 
-# ─────────────────────────────────────────────────────────────
-# VARIABLES GLOBALES
-# Disponibles en todos los jobs
-# ─────────────────────────────────────────────────────────────
-
 env:
   AZURE_LOCATION: westeurope
   BICEP_MAIN:     bicep/main.bicep
-
-# =============================================================
-# JOB 1 — LINT & VALIDATE
-# Compila y valida el Bicep sin tocar Azure
-# Se ejecuta siempre — en push, PR y manual
-# =============================================================
 
 jobs:
   lint-and-validate:
@@ -98,15 +65,12 @@ jobs:
           sudo mv /tmp/bicep-cli /usr/local/bin/bicep
           bicep --version
 
-      # Comprueba errores de sintaxis y buenas prácticas
       - name: Bicep lint
         run: bicep lint ${{ env.BICEP_MAIN }}
 
-      # Compila a ARM — verifica que todo es correcto
       - name: Bicep build
         run: bicep build ${{ env.BICEP_MAIN }} --outdir /tmp/bicep-compiled
 
-      # Guarda el ARM compilado como artefacto del pipeline
       - name: Guardar ARM template compilado
         uses: actions/upload-artifact@v4
         with:
@@ -114,16 +78,10 @@ jobs:
           path: /tmp/bicep-compiled/
           retention-days: 30
 
-# =============================================================
-# JOB 2 — WHAT-IF (solo en Pull Requests)
-# Muestra qué cambiaría en Azure sin desplegar nada
-# Posta el resultado como comentario en el PR
-# =============================================================
-
   what-if:
     name: What-If DEV
     runs-on: ubuntu-latest
-    needs: lint-and-validate   # solo corre si el lint pasó
+    needs: lint-and-validate
     environment: dev
     if: github.event_name == 'pull_request'
 
@@ -131,7 +89,6 @@ jobs:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
 
-      # Login con OIDC — no hay contraseñas, usa el token federado
       - name: Login en Azure (OIDC)
         uses: azure/login@v2
         with:
@@ -150,29 +107,21 @@ jobs:
             --parameters vmAdminPassword="${{ secrets.AVD_VM_ADMIN_PASSWORD }}" \
             --no-pretty-print 2>&1 || true)
 
-          # Guarda el output para usarlo en el comentario del PR
           echo "whatif_output<<EOF" >> $GITHUB_OUTPUT
           echo "$OUTPUT"            >> $GITHUB_OUTPUT
           echo "EOF"                >> $GITHUB_OUTPUT
 
-      # Posta el resultado como comentario en el PR
       - name: Comentar resultado en PR
         uses: actions/github-script@v7
         with:
           script: |
-            const output = `## 🔍 AVD What-If — DEV\n\`\`\`\n${{ steps.whatif.outputs.whatif_output }}\n\`\`\``;
+            const output = `## AVD What-If — DEV\n\`\`\`\n${{ steps.whatif.outputs.whatif_output }}\n\`\`\``;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner:        context.repo.owner,
               repo:         context.repo.repo,
               body:         output
             });
-
-# =============================================================
-# JOB 3 — DEPLOY DEV
-# Se ejecuta en push a main
-# Automático, sin aprobación
-# =============================================================
 
   deploy-dev:
     name: Deploy DEV
@@ -187,6 +136,7 @@ jobs:
       resourceGroupName: ${{ steps.deploy.outputs.resourceGroupName }}
       hostPoolName:      ${{ steps.deploy.outputs.hostPoolName }}
       workspaceName:     ${{ steps.deploy.outputs.workspaceName }}
+      sessionHostCount:  ${{ steps.deploy.outputs.sessionHostCount }}
 
     steps:
       - name: Checkout del repositorio
@@ -211,35 +161,68 @@ jobs:
             --parameters vmAdminPassword="${{ secrets.AVD_VM_ADMIN_PASSWORD }}" \
             --output json)
 
-          # Extrae los outputs del despliegue y los guarda
-          # para usarlos en el summary y en jobs siguientes
           echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
           echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')"           >> $GITHUB_OUTPUT
           echo "workspaceName=$(echo $RESULT | jq -r '.properties.outputs.workspaceName.value')"         >> $GITHUB_OUTPUT
+          echo "sessionHostCount=1" >> $GITHUB_OUTPUT   # dev siempre 1 VM
 
-      # Summary visible en la UI de GitHub Actions
-      # Settings → Actions → deploy-avd → el run concreto
+      # Genera el token fresco y registra cada VM al Host Pool via CLI
+      # Evita el problema de leer el token desde outputs de Bicep
+      - name: Registrar VMs al Host Pool
+        run: |
+          RESOURCE_GROUP="${{ steps.deploy.outputs.resourceGroupName }}"
+          HOSTPOOL_NAME="${{ steps.deploy.outputs.hostPoolName }}"
+          SESSION_HOST_COUNT="${{ steps.deploy.outputs.sessionHostCount }}"
+
+          # Genera un token fresco con 2 horas de validez
+          TOKEN=$(az desktopvirtualization hostpool update \
+            --name "$HOSTPOOL_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --registration-info expiration-time="$(date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ')" registration-token-operation="Update" \
+            --query "registrationInfo.token" \
+            --output tsv)
+
+          echo "Token generado"
+
+          # Instala la extensión DSC en cada VM para registrarla al Host Pool
+          for i in $(seq -w 1 $SESSION_HOST_COUNT); do
+            VM_NAME="vm-avddev-${i}"
+            echo "Registrando $VM_NAME..."
+
+            az vm extension set \
+              --resource-group "$RESOURCE_GROUP" \
+              --vm-name "$VM_NAME" \
+              --name "DSC" \
+              --publisher "Microsoft.Powershell" \
+              --version "2.73" \
+              --settings "{
+                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration_1.0.02790.446.zip\",
+                \"configurationFunction\": \"Configuration.ps1\\\\AddSessionHost\",
+                \"properties\": {
+                  \"HostPoolName\": \"$HOSTPOOL_NAME\",
+                  \"AadJoin\": true
+                }
+              }" \
+              --protected-settings "{\"properties\": {\"RegistrationToken\": \"$TOKEN\"}}"
+
+            echo "$VM_NAME registrada"
+          done
+
       - name: Summary del despliegue
         run: |
-          echo "## DEV Desplegado correctamente" >> $GITHUB_STEP_SUMMARY
-          echo "| Recurso | Valor |"                >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|"                           >> $GITHUB_STEP_SUMMARY
-          echo "| Resource Group | ${{ steps.deploy.outputs.resourceGroupName }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Host Pool      | ${{ steps.deploy.outputs.hostPoolName }} |"      >> $GITHUB_STEP_SUMMARY
-          echo "| Workspace      | ${{ steps.deploy.outputs.workspaceName }} |"     >> $GITHUB_STEP_SUMMARY
-          echo "| Suscripción    | ${{ secrets.AZURE_SUBSCRIPTION_ID }} |"          >> $GITHUB_STEP_SUMMARY
-
-# =============================================================
-# JOB 4 — DEPLOY PROD
-# Se ejecuta en push a release/**
-# Requiere aprobación manual en GitHub Environments
-# =============================================================
+          echo "## DEV Desplegado correctamente"                                                          >> $GITHUB_STEP_SUMMARY
+          echo "| Recurso | Valor |"                                                                      >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|"                                                                                 >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | ${{ steps.deploy.outputs.resourceGroupName }} |"                      >> $GITHUB_STEP_SUMMARY
+          echo "| Host Pool      | ${{ steps.deploy.outputs.hostPoolName }} |"                           >> $GITHUB_STEP_SUMMARY
+          echo "| Workspace      | ${{ steps.deploy.outputs.workspaceName }} |"                          >> $GITHUB_STEP_SUMMARY
+          echo "| Suscripción    | ${{ secrets.AZURE_SUBSCRIPTION_ID }} |"                               >> $GITHUB_STEP_SUMMARY
 
   deploy-prod:
     name: Deploy PROD
     runs-on: ubuntu-latest
     needs: lint-and-validate
-    environment: prod    # ← aquí se activa la aprobación manual
+    environment: prod
     if: |
       startsWith(github.ref, 'refs/heads/release/') ||
       (github.event_name == 'workflow_dispatch' && inputs.environment == 'prod' && inputs.what_if_only == false)
@@ -255,8 +238,6 @@ jobs:
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # What-if automático antes de desplegar en prod
-      # última comprobación antes de tocar producción
       - name: What-If antes de desplegar en PROD
         run: |
           az deployment sub what-if \
@@ -280,10 +261,50 @@ jobs:
 
           echo "resourceGroupName=$(echo $RESULT | jq -r '.properties.outputs.resourceGroupName.value')" >> $GITHUB_OUTPUT
           echo "hostPoolName=$(echo $RESULT | jq -r '.properties.outputs.hostPoolName.value')"           >> $GITHUB_OUTPUT
+          echo "sessionHostCount=3" >> $GITHUB_OUTPUT   # prod siempre 3 VMs
+
+      # Mismo proceso que DEV pero para 3 VMs y nombre prod
+      - name: Registrar VMs al Host Pool
+        run: |
+          RESOURCE_GROUP="${{ steps.deploy.outputs.resourceGroupName }}"
+          HOSTPOOL_NAME="${{ steps.deploy.outputs.hostPoolName }}"
+          SESSION_HOST_COUNT="${{ steps.deploy.outputs.sessionHostCount }}"
+
+          TOKEN=$(az desktopvirtualization hostpool update \
+            --name "$HOSTPOOL_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --registration-info expiration-time="$(date -u -d '+2 hours' '+%Y-%m-%dT%H:%M:%SZ')" registration-token-operation="Update" \
+            --query "registrationInfo.token" \
+            --output tsv)
+
+          echo "Token generado"
+
+          for i in $(seq -w 1 $SESSION_HOST_COUNT); do
+            VM_NAME="vm-avdprod-${i}"
+            echo "Registrando $VM_NAME..."
+
+            az vm extension set \
+              --resource-group "$RESOURCE_GROUP" \
+              --vm-name "$VM_NAME" \
+              --name "DSC" \
+              --publisher "Microsoft.Powershell" \
+              --version "2.73" \
+              --settings "{
+                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration_1.0.02790.446.zip\",
+                \"configurationFunction\": \"Configuration.ps1\\\\AddSessionHost\",
+                \"properties\": {
+                  \"HostPoolName\": \"$HOSTPOOL_NAME\",
+                  \"AadJoin\": true
+                }
+              }" \
+              --protected-settings "{\"properties\": {\"RegistrationToken\": \"$TOKEN\"}}"
+
+            echo "$VM_NAME registrada"
+          done
 
       - name: Summary del despliegue
         run: |
-          echo "## PROD Desplegado correctamente"                                                     >> $GITHUB_STEP_SUMMARY
+          echo "## PROD Desplegado correctamente"                                                         >> $GITHUB_STEP_SUMMARY
           echo "| Recurso | Valor |"                                                                      >> $GITHUB_STEP_SUMMARY
           echo "|---|---|"                                                                                 >> $GITHUB_STEP_SUMMARY
           echo "| Resource Group | ${{ steps.deploy.outputs.resourceGroupName }} |"                      >> $GITHUB_STEP_SUMMARY

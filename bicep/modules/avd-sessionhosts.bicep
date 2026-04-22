@@ -15,8 +15,6 @@ param avdSubnetId string
 param hostPoolName string
 param logAnalyticsWorkspaceId string
 param tags object
-@secure()
-param hostPoolToken string
 
 @secure()
 param vmAdminUsername string
@@ -166,49 +164,7 @@ resource aadJoinExtension 'Microsoft.Compute/virtualMachines/extensions@2025-04-
 ]
 
 // ─────────────────────────────────────────────────────────────
-// LOOP 4 — EXTENSIÓN: AVD DSC
-// Registra cada VM al Host Pool usando el token de registro
-// DSC = Desired State Configuration — configura el agente AVD
-// ─────────────────────────────────────────────────────────────
-
-resource avdDscExtension 'Microsoft.Compute/virtualMachines/extensions@2025-04-01' = [
-  for i in range(0, sessionHostCount): {
-    name:     'AVDAgent'
-    parent:   sessionHosts[i]
-    location: location
-    tags:     tags
-    properties: {
-      publisher:               'Microsoft.Powershell'
-      type:                    'DSC'
-      typeHandlerVersion:      '2.73'
-      autoUpgradeMinorVersion: true
-      settings: {
-        modulesUrl:            dscArtifactUri
-        configurationFunction: 'Configuration.ps1\\AddSessionHost'
-        properties: {
-          HostPoolName: hostPoolName
-          RegistrationInfoTokenCredential: {
-            UserName: 'PLACEHOLDER'   // no se usa, pero el esquema lo requiere
-            Password: 'PrivateSettingsRef:RegistrationToken'
-          }
-          // true = AAD Join
-          AadJoin: true
-        }
-      }
-      protectedSettings: {
-        properties: {
-          // El token va en protectedSettings — nunca aparece en logs
-          RegistrationToken: hostPoolToken
-        }
-      }
-    }
-    // AAD Join debe completarse antes de registrar al Host Pool
-    dependsOn: [aadJoinExtension[i]]
-  }
-]
-
-// ─────────────────────────────────────────────────────────────
-// LOOP 5 — EXTENSIÓN: AZURE MONITOR AGENT
+// LOOP 4 — EXTENSIÓN: AZURE MONITOR AGENT
 // Envía métricas y logs de las VMs a Log Analytics
 // Necesario para AVD Insights y para ver el rendimiento de las VMs
 // ─────────────────────────────────────────────────────────────
@@ -228,8 +184,6 @@ resource amaExtension 'Microsoft.Compute/virtualMachines/extensions@2025-04-01' 
         workspaceId: logAnalyticsWorkspaceId
       }
     }
-    // Monitor se instala después de que la VM esté registrada en el Host Pool
-    dependsOn: [avdDscExtension[i]]
   }
 ]
 
