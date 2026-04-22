@@ -196,7 +196,7 @@ jobs:
               --publisher "Microsoft.Powershell" \
               --version "2.73" \
               --settings "{
-                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration_1.0.02790.446.zip\",
+                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration.zip\",
                 \"configurationFunction\": \"Configuration.ps1\\\\AddSessionHost\",
                 \"properties\": {
                   \"HostPoolName\": \"$HOSTPOOL_NAME\",
@@ -290,7 +290,7 @@ jobs:
               --publisher "Microsoft.Powershell" \
               --version "2.73" \
               --settings "{
-                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration_1.0.02790.446.zip\",
+                \"modulesUrl\": \"https://wvdportalstorageblob.blob.core.windows.net/galleryartifacts/Configuration.zip\",
                 \"configurationFunction\": \"Configuration.ps1\\\\AddSessionHost\",
                 \"properties\": {
                   \"HostPoolName\": \"$HOSTPOOL_NAME\",
