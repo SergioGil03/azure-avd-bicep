@@ -203,7 +203,7 @@ jobs:
                   \"AadJoin\": true
                 }
               }" \
-              --protected-settings "{\"properties\": {\"RegistrationToken\": \"$TOKEN\"}}"
+              --protected-settings "{\"properties\": {\"RegistrationInfoToken\": \"$TOKEN\"}}"
 
             echo "$VM_NAME registrada"
           done
@@ -297,7 +297,7 @@ jobs:
                   \"AadJoin\": true
                 }
               }" \
-              --protected-settings "{\"properties\": {\"RegistrationToken\": \"$TOKEN\"}}"
+              --protected-settings "{\"properties\": {\"RegistrationInfoToken\": \"$TOKEN\"}}"
 
             echo "$VM_NAME registrada"
           done
