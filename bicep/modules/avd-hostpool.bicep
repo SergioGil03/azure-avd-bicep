@@ -9,6 +9,7 @@ param hostPoolType string
 param loadBalancerType string
 param logAnalyticsWorkspaceId string
 param tags object
+param maxSessionLimit int
 
 // ─────────────────────────────────────────────────────────────
 // VARIABLES
@@ -30,11 +31,13 @@ resource hostPool 'Microsoft.DesktopVirtualization/hostPools@2025-10-10' = {
   properties: {
 
     hostPoolType:    hostPoolType     // Pooled
-    loadBalancerType: hostPoolType == 'Personal' ? 'Persistent' : loadBalancerType
+    loadBalancerType: loadBalancerType
 
     // Qué tipo de Application Group se crea por defecto
     // Desktop = escritorio completo
     preferredAppGroupType: 'Desktop'
+
+      maxSessionLimit: maxSessionLimit
 
     // false = entorno de producción
     validationEnvironment: false
