@@ -31,10 +31,6 @@ param vmAdminPassword string
 // Azure tiene límite de 15 chars en nombres de VM Windows
 var vmPrefix = 'vm-${take(replace(namingPrefix, '-', ''), 9)}'
 
-// URL del artefacto DSC de Microsoft para registrar VMs a AVD
-// Microsoft mantiene este artefacto actualizado
-var dscArtifactUri = 'https://wvdportalstorageblob.blob.${environment().suffixes.storage}/galleryartifacts/Configuration_1.0.02790.446.zip'
-
 // ─────────────────────────────────────────────────────────────
 // LOOP 1 — NETWORK INTERFACES
 // Una NIC por VM — conecta cada VM a la subnet de AVD
