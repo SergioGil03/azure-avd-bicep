@@ -73,7 +73,7 @@ permissions:
 # ─────────────────────────────────────────────────────────────
 
 env:
-  AZURE_LOCATION: francecentral
+  AZURE_LOCATION: westeurope
   BICEP_MAIN:     bicep/main.bicep
 
 # =============================================================

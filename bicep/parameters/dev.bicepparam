@@ -2,7 +2,7 @@ using '../main.bicep'
 
 // ─── GENERAL ─────────────────────────────────────────────────
 param environment   = 'dev'
-param location      = 'francecentral'
+param location      = 'westeurope'
 param projectName   = 'avd'
 
 param tags = {

@@ -15,7 +15,7 @@ targetScope = 'subscription'
 param environment string
 
 @description('Región de Azure donde se despliega todo')
-param location string = 'francecentral'
+param location string = 'westeurope'
 
 @description('Nombre del proyecto')
 param projectName string = 'avd'
