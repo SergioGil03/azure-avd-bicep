@@ -77,11 +77,12 @@ param imageSku   string = 'win11-23h2-avd-m365'
 // PARÁMETROS SENSIBLES
 // ─────────────────────────────────────────────────────────────
 
+// Después
 @secure()
-param vmAdminUsername string
+param vmAdminUsername string = ''
 
 @secure()
-param vmAdminPassword string
+param vmAdminPassword string = ''
 
 // ─────────────────────────────────────────────────────────────
 // VARIABLES
