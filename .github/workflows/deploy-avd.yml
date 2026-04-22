@@ -185,8 +185,8 @@ jobs:
           echo "Token generado"
 
           # Instala la extensión DSC en cada VM para registrarla al Host Pool
-          for i in $(seq -w 1 $SESSION_HOST_COUNT); do
-            VM_NAME="vm-avddev-${i}"
+          for i in $(seq 1 $SESSION_HOST_COUNT); do
+            VM_NAME="vm-avddev-$(printf '%02d' $i)"
             echo "Registrando $VM_NAME..."
 
             az vm extension set \
@@ -279,8 +279,8 @@ jobs:
 
           echo "Token generado"
 
-          for i in $(seq -w 1 $SESSION_HOST_COUNT); do
-            VM_NAME="vm-avdprod-${i}"
+          for i in $(seq 1 $SESSION_HOST_COUNT); do
+            VM_NAME="vm-avdprod-$(printf '%02d' $i)"
             echo "Registrando $VM_NAME..."
 
             az vm extension set \
