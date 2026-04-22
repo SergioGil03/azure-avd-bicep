@@ -93,9 +93,9 @@ jobs:
 
       - name: Instalar Bicep CLI
         run: |
-          curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
-          chmod +x ./bicep
-          sudo mv ./bicep /usr/local/bin/bicep
+          curl -Lo /tmp/bicep-cli https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x /tmp/bicep-cli
+          sudo mv /tmp/bicep-cli /usr/local/bin/bicep
           bicep --version
 
       # Comprueba errores de sintaxis y buenas prácticas
