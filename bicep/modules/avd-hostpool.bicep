@@ -112,8 +112,3 @@ resource diagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-01-pr
 
 output hostPoolId   string = hostPool.id
 output hostPoolName string = hostPool.name
-
-// El token lo necesita avd-sessionhosts.bicep para registrar las VMs
-// @secure() no existe en outputs pero Bicep lo trata con cuidado
-// No aparece en logs de despliegue
-output registrationToken string = hostPool.properties.registrationInfo.?token ?? ''

@@ -197,7 +197,7 @@ module sessionHosts './modules/avd-sessionhosts.bicep' = {
     imageSku:                imageSku
     avdSubnetId:             networking.outputs.avdSubnetId
     hostPoolName:            hostPool.outputs.hostPoolName
-    hostPoolToken:           hostPool.outputs.registrationToken
+    hostPoolId:              hostPool.outputs.hostPoolId  
     vmAdminUsername:         vmAdminUsername
     vmAdminPassword:         vmAdminPassword
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
