@@ -112,3 +112,5 @@ resource diagnosticSettings 'Microsoft.Insights/diagnosticSettings@2021-05-01-pr
 
 output hostPoolId   string = hostPool.id
 output hostPoolName string = hostPool.name
+#disable-next-line outputs-should-not-contain-secrets
+output registrationToken string = hostPool.properties.registrationInfo.token

@@ -15,7 +15,8 @@ param avdSubnetId string
 param hostPoolName string
 param logAnalyticsWorkspaceId string
 param tags object
-param hostPoolId string
+@secure()
+param hostPoolToken string
 
 @secure()
 param vmAdminUsername string
@@ -197,7 +198,7 @@ resource avdDscExtension 'Microsoft.Compute/virtualMachines/extensions@2025-04-0
       protectedSettings: {
         properties: {
           // El token va en protectedSettings — nunca aparece en logs
-          RegistrationToken: listSecrets(hostPoolId, '2025-10-10').registrationInfo.token
+          RegistrationToken: hostPoolToken
         }
       }
     }
