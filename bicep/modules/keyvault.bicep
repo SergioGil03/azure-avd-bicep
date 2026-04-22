@@ -10,6 +10,9 @@ param location string
 param namingPrefix string
 param tags object
 
+@description('Purge protection — activar solo en prod')
+param enablePurgeProtection bool = true
+
 // ─────────────────────────────────────────────────────────────
 // VARIABLES
 // Key Vault tiene restricciones de nombre:
@@ -22,7 +25,7 @@ param tags object
 // mismo RG, pero diferente entre RGs distintos.
 // ─────────────────────────────────────────────────────────────
 
-var suffix  = uniqueString(resourceGroup().id)
+var suffix  = uniqueString(resourceGroup().id, location)
 var kvName  = 'kv-${take(replace(namingPrefix, '-', ''), 10)}-${take(suffix, 6)}'
 //            ↑ 'kv-'  ↑ máx 10 chars del prefix  ↑ 6 chars únicos
 //            Resultado ejemplo: kv-avddev-a3f9b2
@@ -54,7 +57,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2025-05-01' = {
 
     // Purge protection: nadie puede eliminarlo permanentemente
     // durante el periodo de retención
-    enablePurgeProtection: true
+    enablePurgeProtection: enablePurgeProtection
 
     // Permite que las VMs lean secretos durante el despliegue
     // (por ejemplo para recuperar contraseñas en extensiones)

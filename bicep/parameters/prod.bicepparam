@@ -33,6 +33,7 @@ param dailyQuotaGb    = 5
 
 // ─── KEY VAULT ───────────────────────────────────────────────
 param kvNetworkDefaultAction = 'Deny'
+param enablePurgeProtection = true   // en prod protegido contra borrados
 
 // ─── CREDENCIALES ────────────────────────────────────────────
 // No se definen aquí — vienen de GitHub Secrets en el pipeline

@@ -28,6 +28,9 @@ param tags object = {
   deployedBy: 'GitHub Actions'
 }
 
+@description('Purge protection en Key Vault — solo prod')
+param enablePurgeProtection bool = true
+
 @allowed(['Allow', 'Deny'])
 param kvNetworkDefaultAction string = 'Allow'
 
@@ -124,6 +127,7 @@ module keyVault './modules/keyvault.bicep' = {
     location:     location
     namingPrefix: namingPrefix
     kvNetworkDefaultAction:   kvNetworkDefaultAction
+    enablePurgeProtection:    enablePurgeProtection
     tags:         tags
   }
 }
